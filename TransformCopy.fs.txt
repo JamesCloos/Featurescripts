@@ -1,0 +1,110 @@
+FeatureScript 2796;
+import(path : "onshape/std/common.fs", version : "2796.0");
+import(path : "onshape/std/coordSystem.fs", version : "2796.0");
+import(path : "onshape/std/evaluate.fs", version : "2796.0");
+import(path : "onshape/std/feature.fs", version : "2796.0");
+import(path : "onshape/std/query.fs", version : "2796.0");
+import(path : "onshape/std/transform.fs", version : "2796.0");
+import(path : "onshape/std/propertytype.gen.fs", version : "2796.0");
+
+annotation { "Feature Type Name" : "Transform Copy",
+             "Feature Type Description" : "Copy a body to multiple mate connector locations" }
+export const transformCopyMulti = defineFeature(function(context is Context, id is Id, definition is map)
+    precondition
+    {
+        annotation { "Name" : "Body to copy", 
+                     "Filter" : EntityType.BODY && BodyType.SOLID,
+                     "MaxNumberOfPicks" : 1 }
+        definition.bodyToCopy is Query;
+        
+        annotation { "Name" : "Source mate connector", 
+                     "Filter" : QueryFilterCompound.ALLOWS_AXIS,
+                     "MaxNumberOfPicks" : 1 }
+        definition.sourceMateConnector is Query;
+        
+        annotation { "Name" : "Target mate connectors", 
+                     "Filter" : QueryFilterCompound.ALLOWS_AXIS,
+                     "MaxNumberOfPicks" : 500 }
+        definition.targetMateConnectors is Query;
+        
+        annotation { "Name" : "Delete original", "Default" : false }
+        definition.deleteOriginal is boolean;
+    }
+    {
+        // Validate body selection
+        var bodies = evaluateQuery(context, definition.bodyToCopy);
+        if (size(bodies) == 0)
+        {
+            throw regenError("Please select a body to copy", ["bodyToCopy"]);
+        }
+        if (size(bodies) > 1)
+        {
+            throw regenError("Please select only one body to copy", ["bodyToCopy"]);
+        }
+        var bodyToCopy = bodies[0];
+        
+        // Validate source mate connector
+        var sourceMateConnectors = evaluateQuery(context, definition.sourceMateConnector);
+        if (size(sourceMateConnectors) == 0)
+        {
+            throw regenError("Please select a source mate connector", ["sourceMateConnector"]);
+        }
+        if (size(sourceMateConnectors) > 1)
+        {
+            throw regenError("Please select only one source mate connector", ["sourceMateConnector"]);
+        }
+        var sourceMateConnector = sourceMateConnectors[0];
+        
+        // Validate target mate connectors
+        var targetMateConnectors = evaluateQuery(context, definition.targetMateConnectors);
+        if (size(targetMateConnectors) == 0)
+        {
+            throw regenError("Please select at least one target mate connector", ["targetMateConnectors"]);
+        }
+        
+        // Get source coordinate system
+        var sourceCS = evMateConnector(context, {
+            "mateConnector" : sourceMateConnector
+        });
+        
+        // Get original part name for naming copies
+        var originalName = try silent(getProperty(context, {
+            "entity" : bodyToCopy,
+            "propertyType" : PropertyType.NAME
+        }));
+        if (originalName == undefined)
+        {
+            originalName = "Part";
+        }
+        
+        // Create a copy at each target mate connector
+        for (var i = 0; i < size(targetMateConnectors); i += 1)
+        {
+            var targetMateConnector = targetMateConnectors[i];
+            
+            // Get target coordinate system
+            var targetCS = evMateConnector(context, {
+                "mateConnector" : targetMateConnector
+            });
+            
+            // Calculate transformation from source to target
+            // This aligns the source mate connector to the target mate connector
+            var transform = toWorld(targetCS) * fromWorld(sourceCS);
+            
+            // Create the copy using opPattern with the transformation
+            opPattern(context, id + ("copy" ~ i), {
+                "entities" : bodyToCopy,
+                "transforms" : [transform],
+                "instanceNames" : [originalName ~ "_Copy_" ~ (i + 1)]
+            });
+        }
+        
+        // Delete original body if requested
+        if (definition.deleteOriginal)
+        {
+            opDeleteBodies(context, id + "deleteOriginal", {
+                "entities" : bodyToCopy
+            });
+        }
+    });
+
